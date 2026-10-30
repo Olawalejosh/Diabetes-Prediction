@@ -1,87 +1,192 @@
 import streamlit as st
+import pandas as pd
 import numpy as np
 import joblib
-import os
+
+from scipy import stats
+
 
 # Page configuration
 st.set_page_config(
-    page_title="Diabetes Prediction",
+    page_title="Diabetes Prediction System",
     page_icon="🩺",
-    layout="centered"
+    layout="wide"
 )
 
-# Load trained model
+
+# Load saved models
 @st.cache_resource
-def load_model():
+def load_models():
     return joblib.load("diabetes_model.pkl")
 
+
 try:
-    model = load_model()
+    models = load_models()
+
 except FileNotFoundError:
-    st.error("Model file not found. Please train and save your model first.")
+    st.error("Model file not found. Run diabetes_prediction.py first.")
     st.stop()
 
-# Application title
+
+# Application heading
 st.title("Diabetes Prediction System")
 
 st.write(
-    "This application uses machine learning to predict "
-    "whether an individual is likely to have diabetes."
+    "A machine learning application designed to assess "
+    "the likelihood of diabetes using patient health information."
 )
 
 st.divider()
 
-# User input fields
-st.subheader("Enter Patient Information")
+
+# Patient information
+st.subheader("Patient Information")
 
 col1, col2 = st.columns(2)
 
+
 with col1:
-    pregnancies = st.number_input("Pregnancies", min_value=0, max_value=20, value=0)
-    glucose = st.number_input("Glucose Level", min_value=0, value=120)
-    blood_pressure = st.number_input("Blood Pressure", min_value=0, value=70)
-    skin_thickness = st.number_input("Skin Thickness", min_value=0, value=20)
+
+    glucose = st.number_input(
+        "Glucose Level",
+        min_value=1.0,
+        value=120.0
+    )
+
+    bmi = st.number_input(
+        "Body Mass Index (BMI)",
+        min_value=0.1,
+        value=25.0
+    )
+
+    age = st.number_input(
+        "Age",
+        min_value=1,
+        value=30
+    )
+
 
 with col2:
-    insulin = st.number_input("Insulin", min_value=0, value=79)
-    bmi = st.number_input("BMI", min_value=0.0, value=25.0)
-    diabetes_pedigree = st.number_input(
+
+    pregnancies = st.number_input(
+        "Number of Pregnancies",
+        min_value=0,
+        value=0
+    )
+
+    dbf = st.number_input(
         "Diabetes Pedigree Function",
         min_value=0.0,
         value=0.5
     )
-    age = st.number_input("Age", min_value=1, max_value=120, value=30)
+
 
 st.divider()
+
+
+# Model selection
+st.subheader("Select Machine Learning Model")
+
+model_choice = st.selectbox(
+    "Choose a prediction model",
+    ["Logistic Regression", "Random Forest"]
+)
+
 
 # Prediction button
 if st.button("Predict Diabetes", use_container_width=True):
 
-    input_data = np.array([[
-        pregnancies,
-        glucose,
-        blood_pressure,
-        skin_thickness,
-        insulin,
-        bmi,
-        diabetes_pedigree,
-        age
-    ]])
+    # Prepare input data
+    input_data = pd.DataFrame([{
+        "Glucose": glucose,
+        "BMI": bmi,
+        "Age": age,
+        "Pregnancies": pregnancies,
+        "DiabetesPedigreeFunction": dbf
+    }])
 
-    prediction = model.predict(input_data)
 
-    st.subheader("Prediction Result")
+    # Apply original preprocessing
+    input_data["Age"] = stats.boxcox(
+        input_data["Age"],
+        lmbda=models["age_lambda"]
+    )
 
-    if prediction[0] == 1:
-        st.error("Prediction: High likelihood of diabetes.")
+    input_data["Pregnancies"] = stats.yeojohnson(
+        input_data["Pregnancies"],
+        lmbda=models["preg_lambda"]
+    )
+
+    input_data["skewed_dbf"] = np.log1p(
+        input_data["DiabetesPedigreeFunction"]
+    )
+
+    input_data.drop(
+        "DiabetesPedigreeFunction",
+        axis=1,
+        inplace=True
+    )
+
+
+    # Arrange features in training order
+    input_data = input_data[
+        ["Glucose", "BMI", "Age", "Pregnancies", "skewed_dbf"]
+    ]
+
+
+    # Select model
+    if model_choice == "Logistic Regression":
+
+        model = models["logistic_regression"]
+
+        scaled_input = models["scaler"].transform(input_data)
+
+        prediction = model.predict(scaled_input)
+
+        probability = model.predict_proba(scaled_input)[0][1]
+
+
     else:
-        st.success("Prediction: Low likelihood of diabetes.")
 
-    if hasattr(model, "predict_proba"):
+        model = models["random_forest"]
+
+        prediction = model.predict(input_data)
+
         probability = model.predict_proba(input_data)[0][1]
-        st.metric("Predicted Diabetes Probability", f"{probability * 100:.2f}%")
+
+
+    # Display results
+    st.subheader("Prediction Results")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+
+        if prediction[0] == 1:
+
+            st.error("Higher likelihood of diabetes")
+
+        else:
+
+            st.success("Lower likelihood of diabetes")
+
+
+    with col2:
+
+        st.metric(
+            "Predicted Diabetes Probability",
+            f"{probability * 100:.2f}%"
+        )
+
+
+    st.progress(float(probability))
+
+    st.caption(
+        "This prediction is an estimate from a machine learning model, "
+        "not a medical diagnosis."
+    )
+
 
 st.divider()
 
 st.caption("Diabetes Prediction System | Machine Learning Project")
-st.caption("This application is for educational purposes and is not a medical diagnosis.")
